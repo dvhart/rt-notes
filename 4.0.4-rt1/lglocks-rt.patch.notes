@@ -1,0 +1,29 @@
+Trying to get convert the lglocks into normal spinlocks was not
+the most clever idea ever:
+
+  On Thu, Mar 26, 2015 at 04:02:08PM +0100, Daniel Wagner wrote:
+  > @@ -67,9 +67,9 @@ void lg_global_lock(struct lglock *lg)
+  >  	preempt_disable();
+  >  	lock_acquire_exclusive(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
+  >  	for_each_possible_cpu(i) {
+  > -		arch_spinlock_t *lock;
+  > +		spinlock_t *lock;
+  >  		lock = per_cpu_ptr(lg->lock, i);
+  > -		arch_spin_lock(lock);
+  > +		spin_lock(lock);
+  >  	}
+  >  }
+
+  Nope, that'll blow up in two separate places.
+
+  One: lockdep, it can only track a limited number of held locks, and it
+  will further report a recursion warning on the 2nd cpu.
+
+  Second: preempt_count_add(), spin_lock() does preempt_disable(), with
+  enough CPUs you'll overflow the preempt counter (255).
+
+https://lkml.org/lkml/2015/3/26/374
+
+Also refactoring the fs/block.c user didn't result in success:
+https://lkml.org/lkml/2015/2/27/296
+
