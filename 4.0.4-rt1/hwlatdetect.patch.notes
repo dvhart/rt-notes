@@ -1,0 +1,25 @@
+There are two new different rewrites for hwlatdetect.patch
+
+	[PATCH] hwlat_detector: Detect hardware-induced latencies
+
+	https://lwn.net/Articles/640034/
+
+and
+
+	[RFC][PATCH 0/4] tracing: Add new hwlat_detector tracer
+
+	https://lkml.org/lkml/2015/4/23/491
+
+
+The first patch just rewrites the boiler plate code. The second one tries
+to integrate it into the ftrace framework. Linus is not too impressed:
+
+  In fact, I'd argue that we should *not* do this odd magic latency
+  measurement thing at all, exactly because Intel gave is the SMI
+  counter, and it's much more likely to be useful in real life. The odd
+  "stop machine and busy loop adn do magic" thing is a incredibly
+  invasive hack that sane people will never enable at all, while the
+  "add support for the hadrware we asked for and got" is a small thing
+  that we can do on all modern Intel chips, and can be enabled by
+  default because there is no downside.
+
