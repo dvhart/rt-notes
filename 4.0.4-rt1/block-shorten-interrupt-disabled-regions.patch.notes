@@ -1,0 +1,169 @@
+Background information on plugging:
+https://lwn.net/Articles/438256/
+
+The blk-sq code was added initialy by
+
+  commit 73c101011926c5832e6e141682180c4debe2cf45
+  Author:	Jens Axboe <jaxboe@fusionio.com>  Tue Mar  8 13:19:51 2011
+  Committer:	Jens Axboe <jaxboe@fusionio.com>  Thu Mar 10 08:45:54 2011
+
+  block: initial patch for on-stack per-task plugging
+
+  This patch adds support for creating a queuing context outside
+  of the queue itself. This enables us to batch up pieces of IO
+  before grabbing the block device queue lock and submitting them to
+  the IO scheduler.
+
+  The context is created on the stack of the process and assigned in
+  the task structure, so that we can auto-unplug it if we hit a schedule
+  event.
+
+  The current queue plugging happens implicitly if IO is submitted to
+  an empty device, yet callers have to remember to unplug that IO when
+  they are going to wait for it. This is an ugly API and has caused bugs
+  in the past. Additionally, it requires hacks in the vm (->sync_page()
+  callback) to handle that logic. By switching to an explicit plugging
+  scheme we make the API a lot nicer and can get rid of the ->sync_page()
+  hack in the vm.
+
+  Signed-off-by: Jens Axboe <jaxboe@fusionio.com>
+
+http://thread.gmane.org/gmane.linux.kernel/1090548
+
+Here is the reasoning on local_irq_save() instead spin_lock_irqsave
+http://thread.gmane.org/gmane.linux.kernel/1090548/focus=1124922
+
+  >> What does the local_irq_save in flush_plug_list protect?  Why don't
+  >> we need it over the list_sort?  And do we still need it when first
+  >> splicing the list to a local one?
+  >>
+  >> It's one of these cases where I'd really like to see more comments
+  >> explaining why the code is doing what it's doing.
+  >
+  > My understanding of that was that the calling requirement of
+  > __elv_add_request is that the queue spinlock is held and that interrupts are
+  > disabled.
+  > So rather than possible enabling and disabling interrupts several times as
+  > different queue are handled, the code just disabled interrupts once, and
+  > then just take the spinlock once for each different queue.
+  >
+  > The whole point of the change to plugging was to take locks less often.
+  > Disabling interrupts less often is presumably an analogous goal.
+  >
+  > Though I agree that a comment would help.
+  >
+  >	q = NULL;
+  > +	/* Disable interrupts just once rather than using spin_lock_irq/sin_unlock_irq
+  >	 * variants
+  >	 */
+  >	local_irq_save(flags);
+  >
+  >
+  > assuming my analysis is correct.
+
+  Yep that is correct, it's to avoid juggling irq on and off for multiple
+  queues. I will put a comment there.
+
+
+
+
+Comments on the commit message:
+
+  Moving the blk_sched_flush_plug() call out of the interrupt/preempt
+  disabled region in the scheduler allows us to replace
+  local_irq_save/restore(flags) by local_irq_disable/enable() in
+  blk_flush_plug().
+
+  Now instead of doing this we disable interrupts explicitely when we
+  lock the request_queue and reenable them when we drop the lock. That
+  allows interrupts to be handled when the plug list contains requests
+  for more than one queue.
+
+s/blk_shed_flush_plug/blk_flush_plug_list/
+
+This is the commit which moved the flush funtion out of the preemption disable
+reagion:
+
+  Commit 9c40cef2b799f9b5e7fa5de4d2ad3a0168ba118c
+  Author:	Thomas Gleixner <tglx@linutronix.de>  Wed Jun 22 19:47:01 2011
+  Committer:	Ingo Molnar <mingo@elte.hu>  Mon Aug 29 12:26:59 2011
+  Original File:	kernel/sched.c
+
+  sched: Move blk_schedule_flush_plug() out of __schedule()
+
+  There is no real reason to run blk_schedule_flush_plug() with
+  interrupts and preemption disabled.
+
+  Move it into schedule() and call it when the task is going voluntarily
+  to sleep. There might be false positives when the task is woken
+  between that call and actually scheduling, but that's not really
+  different from being woken immediately after switching away.
+
+  This fixes a deadlock in the scheduler where the
+  blk_schedule_flush_plug() callchain enables interrupts and thereby
+  allows a wakeup to happen of the task that's going to sleep.
+
+
+The current call change is:
+	schedule()
+		sched_submit_work()
+			blk_schedule_flush_plug()
+				blk_flush_plug_list(plug, true)
+
+	io_schedule_timeout()
+		if (old_iowait) {
+			blk_schedule_flush_plug()
+				blk_flush_plug_list(plug, true)
+		} else {
+			blk_flush_plug()
+				blk_flush_plug_list(plug, false)
+		}
+
+`
+
+The second part of the commit message:
+
+  Aside of that this change makes the scope of the irq disabled region
+  more obvious. The current code confused the hell out of me when
+  looking at:
+
+   local_irq_save(flags);
+     spin_lock(q->queue_lock);
+     ...
+     queue_unplugged(q...);
+       scsi_request_fn();
+	 spin_unlock(q->queue_lock);
+	 spin_lock(shost->host_lock);
+	 spin_unlock_irq(shost->host_lock);
+
+  -------------------^^^ ????
+
+	 spin_lock_irq(q->queue_lock);
+	 spin_unlock(q->lock);
+   local_irq_restore(flags);
+
+
+That has been fixed by
+
+  commit cf68d334dd3a323624f6399dc807d34d8b816391
+  Author:	Christoph Hellwig <hch@lst.de>  Wed Jan 22 14:36:32 2014
+  Committer:	Christoph Hellwig <hch@lst.de>  Fri Jul 25 13:38:53 2014
+
+  scsi: push host_lock down into scsi_{host,target}_queue_ready
+
+  Prepare for not taking a host-wide lock in the dispatch path by pushing
+  the lock down into the places that actually need it.  Note that this
+  patch is just a preparation step, as it will actually increase lock
+  roundtrips and thus decrease performance on its own.
+
+Suggest to remove the paragraph.
+
+
+The rest of the commit message:
+
+  Also add a comment to __blk_run_queue() documenting that
+  q->request_fn() can drop q->queue_lock and reenable interrupts, but
+  must return with q->queue_lock held and interrupts disabled.
+
+That part is missing since the beginning. Either add the comment
+or get rid of the commit message.
