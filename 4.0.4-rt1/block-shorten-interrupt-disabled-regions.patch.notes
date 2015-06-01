@@ -1,3 +1,28 @@
+Anyway, this patch is not needed anymore if upstream drops blk-sq and
+uses blk-mq only.
+
+The -rt kernel runs without any noticable problems when using blk-mq.
+In order to use blk-mq add scsi_mod.use_blk_mq=1 to kernel options.
+
+In order to test blk-mq add 'scsi_mod.use_blk_mq=1' as kernel boot option.
+Load null_blk kernel module with
+
+     modprobe null_blk null_blk queue_mode=2 use_per_node_hctx=1
+
+and run fio with something like
+
+    [global]
+    bs=4k
+    size=16g
+    ioengine=libaio
+    group_reporting=1
+
+    [nullb]
+    filename=/dev/nullb0
+    rw=randread
+    numjobs=8
+
+
 Background information on plugging:
 https://lwn.net/Articles/438256/
 
