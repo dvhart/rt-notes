@@ -1,0 +1,57 @@
+This patch was discussed upstream without a result
+
+http://marc.info/?l=linux-kernel&m=130876518800969&w=4
+
+  Tejun Heo <tj@xxxxxxxxxx> wrote:
+  > Hello, Ingo.
+  > 
+  > On Thu, Jun 23, 2011 at 12:44 PM, Ingo Molnar <mingo@xxxxxxx> wrote:
+  > >
+  > > * Tejun Heo <tj@xxxxxxxxxx> wrote:
+  > >
+  > >> The patch description is simply untrue.  It does affect how wq
+  > >> behaves under heavy CPU load.  The effect might be perfectly okay
+  > >> but more likely it will result in subtle suboptimal behaviors under
+  > >> certain load situations which would be difficult to characterize
+  > >> and track down.  Again, the trade off (mostly killing of
+  > >> ttwu_local) could be okay but you can't get away with just claiming
+  > >> "there's no harm".
+  > >
+  > > Well, either it can be measured or not. If you can suggest a specific
+  > > testing method to Thomas, please do.
+  > 
+  > Crafting a test case where the suggested change results in worse 
+  > behavior isn't difficult (it ends up waking/creating workers which 
+  > it doesn't have to between ttwu and actual execution); however, as 
+  > with any micro benchmark, the problem is with assessing whether and 
+  > how much it would matter in actual workloads (whatever that means) 
+  > and workqueue is used throughout the kernel with widely varying 
+  > patterns making drawing conclusion a bit tricky. [...]
+
+  Well, please suggest a workload where it *matters* - as i suspect any 
+  workload tglx will come up with will have another 90% of workloads 
+  that you could suggest: so it's much better if you suggest a testing 
+  method.
+
+  When someone comes to me with a scheduler change i can give them the 
+  workloads that they should double check. See the changelog of this 
+  recent commit for example:
+
+  c8b281161dfa: sched: Increase SCHED_LOAD_SCALE resolution
+
+  So please suggest a testing method.
+
+  > [...] Given that, changing the behavior for the worse just for this 
+  > cleanup doesn't sound like too sweet a deal. Is there any other 
+  > reason to change the behavior (latency, whatever) other than the 
+  > ttuw_local ugliness?
+
+  Well, the ugliness is one aspect of it, but my main concern is simply 
+  testability: any claim of speedup or slowdown ought to be testable, 
+  right? I mean, we'd like to drive people towards coming with patches 
+  and number like Nikhil Rao did in c8b281161dfa, right?
+
+  Thanks,
+
+  Ingo
+
